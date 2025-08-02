@@ -1,0 +1,146 @@
+---
+title: "Forecasting: Principles and practice"
+subtitle: "Chapters 2-3: Time series graphics and decomposition"
+format: 
+    pdf:
+        number-sections: true 
+        toc: true
+execute: 
+  echo: true
+  output: false
+engine: knitr
+---
+
+```{r initiate-reticulate}
+library('easypackages')
+packages = c('reticulate', 'fpp3', 'tidyverse', 'fable')
+libraries(packages)
+
+use_condaenv("dtp_shiny_v20", required = TRUE)
+```
+
+```{python loading-packages}
+import os
+import tarfile
+import urllib
+import pandas as pd
+import numpy as np
+from plotnine import * 
+
+os.chdir('notebooks/')
+```
+
+```{python load-data-pyt}
+df_gas = pd.read_csv('../data/raw/fueltypesall.csv')
+
+# convert date to datetime object 
+df_gas['Date'] = pd.to_datetime(df_gas['Date'])
+```
+
+
+```{r load-data-r}
+df_gasr = read_csv('../data/raw/fueltypesall.csv')
+
+# convert date to tsibble and then to long format
+df_gasr <- df_gasr |>
+  pivot_longer(cols = -c(Date, `Fuel Type`, `Type de carburant`), 
+               names_to = "city", values_to = "price") |> 
+  mutate(week= yearweek(Date)) |>
+  as_tsibble(index = week, key = c('city', `Fuel Type`))
+```
+
+
+## Time plots
+
+```{r time-plots}
+# plot gas prices in toronto over time
+toronto = df_gasr |>
+  filter(city == 'Toronto East/Est')
+
+plot_toronto = autoplot(toronto) + 
+  labs(y='price') + 
+  theme_classic()
+
+ggsave("figures/toronto_plot.png", plot = plot_toronto, width = 8, height = 6)
+```
+
+```{python time-plots-py}
+# Create the same plot using Python 
+plot_toronto = (
+    ggplot(df_gas, aes(x='Date', y='Toronto East/Est', color ="Fuel Type")) +
+    geom_line() +
+    labs(y='price') +
+    theme_classic()
+)
+```
+
+ 
+## Time series patterns 
+
+1. **Trend**: a long-term change that does not have to be linear. 
+2. **Seasonal**: changes that occur for fixed and known periods (e.g., holidays, seasons)
+3. **Cyclic**: rises and falls that are not of a fixed frequency (e.g., economic conditions) and last at least 2 years. 
+
+Plots below examine quarterly data. 
+
+```{r r-quarterly}
+aus_production |> 
+  filter(year(Quarter) >= 1980) |>
+  autoplot(Electricity) +
+  labs(y='gWh', title='Australian electricity production') + 
+  theme_classic()
+```
+
+```{python python-quarterly}
+(ggplot(r.aus_production, aes(x='Quarter', y='Electricity')) +
+    geom_line() +
+    labs(y='price') +
+    theme_classic()
+)
+```
+
+
+# Time series decomposition
+
+
+Adjustments are often useful as they create simpler time series. There are four common types of adjustments: 
+
+1) Calendar: Instead of computing average sales per month, reduce it down to sales/day, as the number of selling days differ by month. 
+2) Population: Similarly, compute population variables at to either per capita or relative to some fixed denominator (1000)
+3) Inflation: adjust financial data such that they are expressed in common dollars (i.e., adjusted for infation). 
+4) Mathematical: if data are heteroscedastic, log transformations are useful (and also still interpretable). 
+
+## Time series components
+
+There are two types of decompositions: 
+
+1. **Additive**. Value at any given $y_t$ time point is the sum of a seasonal ($S_t$), trend-cycle ($T_t$), and remainder ($R_t$) component. 
+
+$$
+y_t = S_t + T_t + R_t
+$$
+
+2. **Mulitplicative**. Value at any given $y_t$ time point is the product of a seasonal ($S_t$), trend-cycle ($T_t$), and remainder ($R_t$) component. 
+
+$$
+y_t = S_t \times T_t \times  R_t
+$$
+
+Additive decompoisiton is appropriate if neither $S_t$ or $T_t$ vary with the level of $y_t$. If not, multiplicative decomposition is more appropriate. Alternative, if there is heteroscedasity in either the seasonal or trend-cycle components, then transformations can be applied to instill stability in the data. On this point, note that using a log transformation is equivalent to using the multiplicative decomposition. 
+
+### Examle: Employment in the US retail sector
+
+```{r retail-plot}
+
+us_retail_employment = us_employment |>
+  filter(year(Month) >= 1990, Title == "Retail Trade") |>
+  select(-Series_ID)
+
+autoplot(us_retail_employment, Employed) +
+  labs(y = "Persons (thousands)",
+       title = "Total employment in US retail")
+```
+
+
+
+
