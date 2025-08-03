@@ -11,12 +11,15 @@ execute:
 engine: knitr
 ---
 
+```{r}
+install.packages("slider")
+```
 ```{r initiate-reticulate}
 library('easypackages')
-packages = c('reticulate', 'fpp3', 'tidyverse', 'fable')
+packages = c('reticulate', 'fpp3', 'tidyverse', 'fable', 'slider')
 libraries(packages)
 
-use_condaenv("dtp_shiny_v20", required = TRUE)
+use_condaenv("base", required = TRUE)
 ```
 
 ```{python loading-packages}
@@ -39,6 +42,7 @@ df_gas['Date'] = pd.to_datetime(df_gas['Date'])
 
 
 ```{r load-data-r}
+getwd()
 df_gasr = read_csv('../data/raw/fueltypesall.csv')
 
 # convert date to tsibble and then to long format
@@ -90,6 +94,7 @@ aus_production |>
   labs(y='gWh', title='Australian electricity production') + 
   theme_classic()
 ```
+![toronto plot](figures/toronto_plot.png){width=400px height=300px}
 
 ```{python python-quarterly}
 (ggplot(r.aus_production, aes(x='Quarter', y='Electricity')) +
@@ -131,7 +136,6 @@ Additive decompoisiton is appropriate if neither $S_t$ or $T_t$ vary with the le
 ### Examle: Employment in the US retail sector
 
 ```{r retail-plot}
-
 us_retail_employment = us_employment |>
   filter(year(Month) >= 1990, Title == "Retail Trade") |>
   select(-Series_ID)
@@ -142,5 +146,61 @@ autoplot(us_retail_employment, Employed) +
 ```
 
 
+Code applies STL decomposition. NOtice that the `season_adjust` column represents the observed score without the seasonality component (i.e., `y_t - S_t`), but without the remainder. To better interpret changes, look only at the trend pattern. 
 
+```{r stl-decomp}
+dcmp <- us_retail_employment |>
+  model(stl = STL(Employed))
+
+stl_output = components(dcmp)
+
+components(dcmp) |>
+  as_tsibble() |>
+  autoplot(Employed, colour="gray") +
+  geom_line(aes(y=trend), colour = "#D55E00") +
+  labs(
+    y = "Persons (thousands)",
+    title = "Total employment in US retail"
+  )
+
+
+# plots all three components 
+# components(dcmp) |> autoplot()
+```
+
+
+## Moving averages
+
+Moving average smoothing computes a moving average, $\hat{T}_t$ by taking the *k* observations that precede and follow the current *t* observation (note that $m = 2k+1$)
+
+$$ 
+\hat{T}_t = \frac{1}{m} \sum^k_{j=-k} y_{t+j}
+$$
+
+In R, the `slide_dbl()` function can be used to compute moving averages. 
+
+```{r moving-average}
+aus_exports <- global_economy |>
+  filter(Country == "Australia") |>
+  mutate(
+    `5-MA` = slider::slide_dbl(Exports, mean,
+                .before = 2, .after = 2, .complete = TRUE)
+  )
+
+aus_exports |>
+  autoplot(Exports) +
+  geom_line(aes(y = `5-MA`), colour = "#D55E00") +
+  labs(y = "% of GDP",
+       title = "Total Australian exports")
+```
+
+To obtain a centered series of moving averages, a moving can be taken of a moving average. This is commonly done with seasonal data. A more refined method is to use weighted moving averages where 
+
+
+$$
+\hat{T}_t = \sum^k_{j=-k} a_j y_{t+j}
+$$
+
+
+## Classical decomposition 
 
