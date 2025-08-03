@@ -11,14 +11,12 @@ execute:
 engine: knitr
 ---
 
-```{r}
-install.packages("slider")
-```
+
 ```{r initiate-reticulate}
 library('easypackages')
-packages = c('reticulate', 'fpp3', 'tidyverse', 'fable', 'slider')
+packages = c('reticulate', 'fpp3', 'tidyverse', 'fable', 'slider', 'seasonal')
 libraries(packages)
-
+# install.packages('seasonal')
 use_condaenv("base", required = TRUE)
 ```
 
@@ -42,8 +40,7 @@ df_gas['Date'] = pd.to_datetime(df_gas['Date'])
 
 
 ```{r load-data-r}
-getwd()
-df_gasr = read_csv('../data/raw/fueltypesall.csv')
+df_gasr = read_csv('data/raw/fueltypesall.csv')
 
 # convert date to tsibble and then to long format
 df_gasr <- df_gasr |>
@@ -196,11 +193,127 @@ aus_exports |>
 
 To obtain a centered series of moving averages, a moving can be taken of a moving average. This is commonly done with seasonal data. A more refined method is to use weighted moving averages where 
 
-
 $$
 \hat{T}_t = \sum^k_{j=-k} a_j y_{t+j}
 $$
 
+Weighted moving averages result in smoother trend cycles.
 
 ## Classical decomposition 
 
+This is a simple decomposition and acts as a starting point for understanding time series analyses. As with STL decomposition, additive and multiplicative versions exist. The difference here is that the seasonal component, $S_t$, is assumed to be constant over time. 
+
+### Additive decomposition
+
+1. Use $2 /times m-MA$ is time series has even number of observations. 
+2. Compute detrended time series, $y_t - \hat{T}_t$
+3. Estimate the seasonal component, $\hat{S}_t$, by computing the mean value across all seasonal components across all years. For example, take the average of all $y_t - \hat{T}_t$ in February across all years. Importantly, the seasonal component values are then adjusted such that they sum to zero. Thinking here is that if the seasonal components do not sum to zero, then the excess will carry into the trend/noise. This is solved by mean centering. 
+4. Compute remainder, $\hat{R}_t = y_t - \hat{T}_t - \hat{S}_t$. 
+
+```{r classical-decom}
+us_retail_employment |>
+  model(
+    classical_decomposition(Employed, type = "additive")) |>
+  components() |>
+  autoplot() +
+  labs(title = "Classical additive decomposition of total
+                  US retail employment")
+```
+
+### Multiplicative decomposition
+
+1. Use $2 /times m-MA$ is time series has even number of observations. 
+2. Compute detrended time series, $\frac{y_t}{\hat{T}_t}$
+3. Estimate the seasonal component, $\hat{S}_t$, by computing the mean value across all seasonal components across all years. For example, take the average of all $y_t - \hat{T}_t$ in February across all years. Importantly, the seasonal component values are then adjusted such that they sum to zero. Thinking here is that if the seasonal components do not sum to zero, then the excess will carry into the trend/noise. This is solved by mean centering. 
+4. Compute remainder, $\hat{R}_t = \frac{y_t}{\hat{T}_t \hat{S}_t}$. 
+
+Classical decomposition has several limitations: 
+
+1. No estimate of first and last $m$ time periods for $\hat{T}$ or $\hat{R}$. 
+2. Trend cycle, $\hat{T}$, gives overly smooth estimates that miss out on sudden changes. 
+3. Assumption of constant $\hat{S}_t$ is tenuous. 
+4. Cannot handle unusual incidences (e.g., worker strike causing)
+
+
+## Methods used by official statistics agencies
+
+Over time, several agencies have developed methods to deal with seasonal adjustments. These methods are largely variants of the X-11 and SEATS methods. Importantly, these methods are designed to deal with quarterly and monthly data and so cannot handle any other types of data (daily, weekly, hourly, etc.). 
+
+### X-11 method
+
+Improved classical decomposition to handle 
+
+1. Missingness of trend values at first and last m values. 
+2. Allows seasonal component to change over time. 
+3. Can incorporate trading day variation, holidays, and effects of known preditros. 
+
+
+```{r x11-vs-class}
+plot_class = us_retail_employment |>
+  model(
+    classical_decomposition(Employed, type = "additive")
+  ) |>
+  components() |>
+  autoplot() +
+  labs(title = "Classical additive decomposition of total
+                  US retail employment")
+
+ggsave("notebooks/figures/class_add_employment.png", plot = plot_class, width = 8, height = 6)
+
+
+x11_dcmp <- us_retail_employment |>
+  model(x11 = X_13ARIMA_SEATS(Employed ~ x11(mode='add'))) |>
+  components()
+
+plot_x11 = autoplot(x11_dcmp) +
+  labs(title =
+    "Decomposition of total US retail employment using X-11.")
+
+ggsave("notebooks/figures/x11_add_employment.png", plot = plot_x11, width = 8, height = 6)
+```
+
+![Classical decomposition](figures/x11_add_employment.png){width=400px height=300px}
+![X-11 method](figures/class_add_employment.png){width=400px height=300px}
+
+
+THe X11 method has estimated trend values values at the beginning and end of the time period, has better overall resolution in the trend cycle, and captures the oddity in 1996 (within the remainder term). 
+
+The seasonal values can also be examined across months across year year. 
+
+```{r seasonal}
+plot_seasonal = x11_dcmp |>
+  gg_subseries(seasonal)
+
+ggsave("notebooks/figures/x11_add_seasonal_plot.png", plot = plot_seasonal, width = 8, height = 6)
+```
+
+![Seasonal plot](figures/x11_add_seasonal_plot.png){width=400px height=300px}
+
+
+### SEATS method
+
+The Seasonal Extraction in ARIMA Time Series (SEATS) method  has the same three components as the X-11 method, but fits an ARIMA model to the data.  
+
+```{r seats}
+
+seats_dcmp <- us_retail_employment |>
+  model(seats = X_13ARIMA_SEATS(Employed ~ seats())) |>
+  components()
+autoplot(seats_dcmp) +
+  labs(title =
+    "Decomposition of total US retail employment using SEATS")
+```
+
+## STL decomposition
+
+Several advantages over SEATS and X-11 methods: 
+
+1. Can handle any type of frequnecy of data. 
+2. Seasonal component can change over time. 
+3. Smoothness of trend-cylcle. 
+4. Robust decomposition can be specified to instill robustness against outliers. Note this will affect the remainder component. 
+
+Some disadvantages: 
+
+1. Does not automatically handle trading day variation or calendar variation. 
+2. Only has additive decomposition. That being said, logs of data can be computed to obtain a multiplicative decomoposition. Also, decompositions that lie between additive and multiplicative decompositions can be obtained by using Box-Cox transformation with $0 < \lambda < 1$. 
