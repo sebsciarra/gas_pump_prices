@@ -12,11 +12,19 @@ engine: knitr
 ---
 
 
+```{r data-sources}
+# eval: false 
+"""
+CPI adjustment for inflation 
+# https://www150.statcan.gc.ca/t1/tbl1/en/tv.action?pid=1810000501&pickMembers%5B0%5D=1.2&cubeTimeFrame.startYear=1990&cubeTimeFrame.endYear=2024&referencePeriods=19900101%2C20240101
+"""
+```
+
 ```{r initiate-reticulate}
 library('easypackages')
 packages = c('reticulate', 'fpp3', 'tidyverse', 'fable', 'slider', 'seasonal')
 libraries(packages)
-# install.packages('seasonal')
+# install.packages('feasts')
 use_condaenv("base", required = TRUE)
 ```
 
@@ -50,6 +58,27 @@ df_gasr <- df_gasr |>
   as_tsibble(index = week, key = c('city', `Fuel Type`))
 ```
 
+Apply inflation correction to gas prices. 
+
+```{r inflation-corr}
+# read in inflation data
+df_inflation = read_csv('data/raw/1810000501_databaseLoadingData.csv')
+df_gas_inf = df_inflation |> filter(`Products and product groups` == 'Gasoline')
+
+df_gasr$year = as.integer(format(df_gasr$Date, "%Y"))
+
+# compute dollars in terms of 2025 dollars
+# 1) Compute CPIs centered on 2025 
+value_24 = df_gas_inf |> filter(REF_DATE == 2024) |> pull(VALUE)
+  = df_gas_inf$VALUE/value_24
+
+# merge in CPI value based on year
+cols = c('REF_DATE', 'VALUE', 'cpi_2024')
+df_gasr <- left_join(df_gasr, df_gas_inf[ ,cols], by = c("year" = "REF_DATE"))
+
+
+
+```
 
 ## Time plots
 
@@ -317,3 +346,29 @@ Some disadvantages:
 
 1. Does not automatically handle trading day variation or calendar variation. 
 2. Only has additive decomposition. That being said, logs of data can be computed to obtain a multiplicative decomoposition. Also, decompositions that lie between additive and multiplicative decompositions can be obtained by using Box-Cox transformation with $0 < \lambda < 1$. 
+
+Two main parameters (that should both be odd numbers): 
+1. Trend-cycle window: smaller windows capture sudden changes. 
+2. Seasonal window: number of consecutive years used to estimate seasonal component. 
+
+```{r stl}
+us_retail_employment |>
+  model(
+    STL(Employed ~ trend(window = 7) +
+                   season(window = "periodic"),
+    robust = TRUE)) |>
+  components() |>
+  autoplot()
+```
+
+
+# Time series features
+
+## ACF features 
+
+Examine mean gas prices
+
+```{r features}
+df_gasr |>
+  features()
+```
