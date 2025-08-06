@@ -26,6 +26,8 @@ packages = c('reticulate', 'fpp3', 'tidyverse', 'fable', 'slider', 'seasonal')
 libraries(packages)
 # install.packages('feasts')
 use_condaenv("base", required = TRUE)
+
+setwd('/Users/seb/Desktop/Projects/gas_pump_prices/')
 ```
 
 ```{python loading-packages}
@@ -36,11 +38,11 @@ import pandas as pd
 import numpy as np
 from plotnine import * 
 
-os.chdir('notebooks/')
+os.chdir('/Users/seb/Desktop/Projects/gas_pump_prices/')
 ```
 
 ```{python load-data-pyt}
-df_gas = pd.read_csv('../data/raw/fueltypesall.csv')
+df_gas = pd.read_csv('data/raw/fueltypesall.csv')
 
 # convert date to datetime object 
 df_gas['Date'] = pd.to_datetime(df_gas['Date'])
@@ -62,47 +64,44 @@ Apply inflation correction to gas prices.
 
 ```{r inflation-corr}
 # read in inflation data
-df_inflation = read_csv('data/raw/1810000501_databaseLoadingData.csv')
+df_inflation = read_csv('data/raw/1810000401_databaseLoadingData.csv')
 df_gas_inf = df_inflation |> filter(`Products and product groups` == 'Gasoline')
 
-df_gasr$year = as.integer(format(df_gasr$Date, "%Y"))
+df_gasr$year_month = format(df_gasr$Date, "%Y-%m")
 
 # compute dollars in terms of 2025 dollars
 # 1) Compute CPIs centered on 2025 
-value_24 = df_gas_inf |> filter(REF_DATE == 2024) |> pull(VALUE)
-  = df_gas_inf$VALUE/value_24
+value_25 = df_gas_inf |> filter(REF_DATE == '2025-06') |> pull(VALUE)
+df_gas_inf$cpi_2025 = value_25/df_gas_inf$VALUE
 
-# merge in CPI value based on year
-cols = c('REF_DATE', 'VALUE', 'cpi_2024')
-df_gasr <- left_join(df_gasr, df_gas_inf[ ,cols], by = c("year" = "REF_DATE"))
+# merge in CPI value based on year and compute 
+cols = c('REF_DATE', 'VALUE', 'cpi_2025')
+df_gasr <- left_join(df_gasr, df_gas_inf[ ,cols], by = c("year_month" = "REF_DATE"))
 
+# examine if tiem period with missing cpi_2025 value exists in inflatino prices
+missing_time_periods = unique(df_test[is.na(df_test$cpi_2025), 'year_month'])
 
+# NOTE: replace 1990-01 with 1990-02 and 2025-07 with 2025-06
+df_gasr[df_gasr$year_month == '1990-01', 'cpi_2025'] = unique(df_gasr[df_gasr$year_month == '1990-02', 'cpi_2025'])
+df_gasr[df_gasr$year_month == '2025-07', 'cpi_2025'] = unique(df_gasr[df_gasr$year_month == '2025-06', 'cpi_2025'])
 
+df_gasr$price_2025 = df_gasr$price * df_gasr$cpi_2025
 ```
 
 ## Time plots
 
 ```{r time-plots}
 # plot gas prices in toronto over time
-toronto = df_gasr |>
+df_toronto = df_gasr |>
   filter(city == 'Toronto East/Est')
 
-plot_toronto = autoplot(toronto) + 
-  labs(y='price') + 
+plot_toronto = autoplot(object=df_toronto, price_2025) + 
+  labs(y='Price (2025 dollars)') + 
   theme_classic()
 
-ggsave("figures/toronto_plot.png", plot = plot_toronto, width = 8, height = 6)
+ggsave("notebooks/figures/toronto_plot.png", plot = plot_toronto, width = 8, height = 6)
 ```
 
-```{python time-plots-py}
-# Create the same plot using Python 
-plot_toronto = (
-    ggplot(df_gas, aes(x='Date', y='Toronto East/Est', color ="Fuel Type")) +
-    geom_line() +
-    labs(y='price') +
-    theme_classic()
-)
-```
 
  
 ## Time series patterns 
@@ -364,11 +363,56 @@ us_retail_employment |>
 
 # Time series features
 
-## ACF features 
+## STL Features
 
-Examine mean gas prices
+If data has a strong trend, then the variability of the seasonally-untrended data (removal of $S_t$ from $y_t$) should have more variability than the remainder ($R_t$). Conversely, if there is little trend-cycle in the data, $var(R)$ will largely relative to the total variability. This can be summarized in
 
-```{r features}
-df_gasr |>
-  features()
+$$ 
+F_t = \max \big(0, \frac{var(R_t)}{var(R_t + T_t)})
+$$
+
+Note that an indicator function is used because $var{R_t}$ can be larger than $var{R_t + T_t}$. 
+
+In a similar way, the strength of the seasonal component can also be examined. 
+$$ 
+F_s = \max \big(0, \frac{var(R_t)}{var(S_t + T_t)})
+$$
+
+
+```{r stl-features}
+plot_trend_season = df_toronto[df_toronto] |>
+  features(price_2025, feat_stl) |>
+  ggplot(aes(x = trend_strength, y = seasonal_strength_year,
+             col = `Fuel Type`)) +
+  geom_point(size = 7) + 
+  theme_classic()
+
+
+ggsave("notebooks/figures/plot_trend_season.png", plot = plot_trend_season, width = 8, height = 6)
 ```
+
+![Season-trend correlations](figures/plot_trend_season.png){width=400px height=300px}
+
+1. Diesel has strongest seasonal and trend component 
+2. Regular unleaded gasoline has weakest components
+
+```{r seson-trend-plots}
+df_5year <- df_toronto[df_toronto$Date >= as.Date("1995-01-01") & df_toronto$Date <= as.Date("1999-12-31"), ]
+
+
+df_5year |> 
+  filter(`Fuel Type` == 'Regular Unleaded Gasoline') |> 
+  ggplot(aes(x=Date, y=price_2025)) + 
+  geom_line(size=1) + 
+
+  theme_classic()
+```
+
+# The forecaster's toolbox
+## Fittedvalues and residuals 
+
+*Innovation* residuals are simply on a transformed scale. 
+
+
+
+
