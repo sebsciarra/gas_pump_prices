@@ -409,10 +409,69 @@ df_5year |>
 ```
 
 # The forecaster's toolbox
-## Fittedvalues and residuals 
+## Fitted values and residuals 
+Fitted values are not true forecasts if they use data points after the predicted value. 
 
-*Innovation* residuals are simply on a transformed scale. 
+*Innovation* residuals are simply on a transformed scale. Oftentimes, transformations will be needed. 
+
+### Residual diagnostics 
+
+Good forecasting methods will 
+
+1. Provide uncorrelated residuals. If not, this suggets there is meaningful information that should be used in computing forecasts. 
+2. Provide zero-mean residuals. If not, then forecasts are biased becase it is systematically under/overpredicting values. 
+
+If forecasting method does not satisfy property, then it can be improved. That being said, a method that does satisfy these methods can still be improved. The following conditions are not ncessary, but also needed for computing prediction intervals . Importantly, it is not always possible to improve a model to satisfy these properties.
+
+3. Innovation residuals are homoscedastic. Ensures prediction certainty is constant over time (for instance, during periods of volatility)
+4. Innovation residuals are normally distributed. Ensures predictions intervals accurately capture uncertainty. 
+
+### Example using gas prices
+
+A naïve model is used for didactic purposes. In this model, a prediction is simply equal to the previous value in the series, which implies that residuals are simply the differnce between the current and previous value: 
+
+$$
+e_t = y_t - \hat{y}_t = y_t - y_{t-1}
+$$
+
+```{r naive-method}
+plot_residuals = df_toronto |> 
+  filter(city == 'Toronto East/Est', `Fuel Type` == 'Regular Unleaded Gasoline') |>
+  model(NAIVE(price_2025)) |>
+  gg_tsresiduals()
 
 
+ggsave("notebooks/figures/residualplot.png", plot = plot_residuals, width = 8, height = 6)
+```
 
+In the residual plot, the residuals are normally ditributed, but ther are periods when variability and autocorrelated errors appear 
+
+![Residual plot ](figures/residualplot.png){width=400px height=300px}
+
+### Portmanteau tests for autoccorelation
+
+Looking at ACF plots can be misleading because autocorrelatinos can appear to be outliers due to sampling error. To control against this, use Ljung-Box test 
+
+$$
+Q^* = T(T+2) \sum^l_{k=1} (T- k)^{-1} r^2_k, 
+$$
+
+where $T$ is the number of observatinos, $r_k$ is the autocorrelation for lag *k*, and $l$ is the maximum lag under consideration. This metric will have a $\chi^2$ distirbution if the autocorrelations come from a white noise series. 
+
+In both cases, our residuals have some systematicity to them, indicating a poor model. 
+```{r residual-test}
+naive_model = df_toronto |> 
+  filter(city == 'Toronto East/Est', `Fuel Type` == 'Regular Unleaded Gasoline') |>
+  model(NAIVE(price_2025)) |>
+  augment()
+ 
+ naive_model |>
+  features(.innov, box_pierce, lag = 10)
+
+naive_model |>
+  features(.innov, ljung_box, lag = 10)
+
+```
+
+## Distributional forecasts and prediction intervals 
 
