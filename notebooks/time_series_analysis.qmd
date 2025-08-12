@@ -22,7 +22,7 @@ CPI adjustment for inflation
 
 ```{r initiate-reticulate}
 library('easypackages')
-packages = c('reticulate', 'fpp3', 'tidyverse', 'fable', 'slider', 'seasonal')
+packages = c('reticulate', 'fpp3', 'tidyverse', 'fable', 'slider', 'seasonal', 'readr')
 libraries(packages)
 # install.packages('feasts')
 use_condaenv("base", required = TRUE)
@@ -95,6 +95,8 @@ df_gasr$price_2025 = df_gasr$price * df_gasr$cpi_2025
 df_toronto = df_gasr |>
   filter(city == 'Toronto East/Est')
 
+write_csv(x=df_toronto, file='data/processed/data_toronto_proc.csv')
+# write toronto data 
 plot_toronto = autoplot(object=df_toronto, price_2025) + 
   labs(y='Price (2025 dollars)') + 
   theme_classic()
@@ -292,7 +294,7 @@ ggsave("notebooks/figures/class_add_employment.png", plot = plot_class, width = 
 x11_dcmp <- us_retail_employment |>
   model(x11 = X_13ARIMA_SEATS(Employed ~ x11(mode='add'))) |>
   components()
-
+tsibb
 plot_x11 = autoplot(x11_dcmp) +
   labs(title =
     "Decomposition of total US retail employment using X-11.")
@@ -456,7 +458,7 @@ $$
 Q^* = T(T+2) \sum^l_{k=1} (T- k)^{-1} r^2_k, 
 $$
 
-where $T$ is the number of observatinos, $r_k$ is the autocorrelation for lag *k*, and $l$ is the maximum lag under consideration. This metric will have a $\chi^2$ distirbution if the autocorrelations come from a white noise series. 
+where $T$ is the number of observations, $r_k$ is the autocorrelation for lag *k*, and $l$ is the maximum lag under consideration. This metric will have a $\chi^2$ distirbution if the autocorrelations come from a white noise series. 
 
 In both cases, our residuals have some systematicity to them, indicating a poor model. 
 ```{r residual-test}
@@ -474,4 +476,101 @@ naive_model |>
 ```
 
 ## Distributional forecasts and prediction intervals 
+### Prediction intervals 
+
+Use the standard devation for *h*-step forecast to construct interval of certainty: 
+
+$$
+\hat{y}_{T + h|T} \pm c\hat{\sigma}_h
+$$
+
+### One-step prediction intervals
+
+Intervals can be created using standard deviation of $t$ residuals
+
+$$
+\hat{\sigma} = \sqrt{\frac{1}{T-K-M} \sigma^T_{i=1}\epsilon^2_t}, 
+$$
+
+where $K$ is the number of parameters, $M$ is the number of missing values in the residuals (e.g., $M$ =1 for a naïve forecast because the first observation cannot be forecasted), and $T$ is the number of observations. 
+
+### Multi-step prediction intervals 
+
+For multi-step predictions, we cannot use the standard deviation of the residuals. More sophisticated approaches must be used. 
+
+For simple models, the residual standard deviation ($\sigma$ is simply multiplied by a constant): 
+
+1. Mean: $\hat{sigma}_h = \hat{\sigma} \sqrt{1 + 1/T}$
+2. Naïve: $\hat{\sigma}_h = \hat{\sigma}\sqrt{h}$
+3. Seasonal naïve: $\hat{\sigma}_h = \hat{\sigma}\sqrt{k+h}$
+4. Drift: $\hat{\sigma}_h = \hat{\sigma}\sqrt{h (1 + h/(T-1))}$
+
+Each of the above methods yield symmetric prediction intervals. 
+
+```{r simple-forecast}
+df_toronto = read_csv(file='data/processed/data_toronto_proc.csv')
+
+df_toronto <- df_toronto |>
+  filter(`Fuel Type` == 'Regular Unleaded Gasoline') |>
+   mutate(week= yearweek(Date)) |>
+  as_tsibble(index = week, key = c('city', `Fuel Type`))
+
+pred_interval_plot = df_toronto |>
+  filter(`Fuel Type` == 'Regular Unleaded Gasoline') |>
+  model(NAIVE(price_2025)) |>
+  forecast(h = 10) |>
+ ggplot2::autoplot(df_toronto |> filter(Date > as.Date("2024-01-01"))) + 
+ theme_classic()
+
+ ggsave("notebooks/figures/pred_interval_plot.png", plot = pred_interval_plot, width = 8, height = 6)
+
+```
+
+### Prediction interbals from bootstrapped residuals 
+
+When it is tenuous to assume that residuals are normally distributed, one solution is to create prediction intervals using bootstrapping methods. Importantly, bootstrapping assumes that residuals are uncorrelated and homoscedastic. 
+
+With a naïve method, previous residuals are sampled in order to simulate the next obsservation. That is, when predicting beyond the *T* sampled time periods for a potential observation($y^\ast_{T+1}$),  
+
+$$
+y^\ast_{T+1} = y_T + \epsilon^\ast_{T+1}
+$$
+
+we sample $\epsilon^\ast_{T+1}$ from the set of previous residuals. Similarly, for the next observation, we can follow a similar procedure
+
+$$
+y^\ast_{T+2} = y_T + \epsilon^\ast_{T+2}
+$$
+
+The code below generates forcasts for the next 4 weeks. 
+
+```{r bootstrap-interval}
+fit <- df_toronto |>
+  model(NAIVE(price_2025))
+
+sim <- fit |> generate(h = 4, times = 5, bootstrap = TRUE)
+
+plot_potentials = df_toronto |> 
+  filter(Date > as.Date("2024-01-01"))|>
+  ggplot(aes(x = week)) +
+  geom_line(aes(y = price_2025)) +
+  geom_line(aes(y = .sim, colour = as.factor(.rep)),
+    data = sim) +
+  labs(title="Weekly gas pump prices") +
+  theme_classic() 
+
+ ggsave("notebooks/figures/plot_potentials.png", plot = plot_potentials, width = 8, height = 6)
+
+
+fit_boot = fit |> forecast(h = 4, bootstrap = TRUE)
+
+plot_bootstrap = autoplot(fit_boot, df_toronto |> 
+  filter(Date > as.Date("2024-01-01"))) +
+  labs(title="Google daily closing stock price", y="$US" )
+
+ ggsave("notebooks/figures/plot_bootstrap.png", plot = plot_bootstrap, width = 8, height = 6)
+```
+
+
+### Forecastingusign transformations 
 
