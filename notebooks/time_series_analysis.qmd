@@ -1,6 +1,5 @@
 ---
-title: "Forecasting: Principles and practice"
-subtitle: "Chapters 2-3: Time series graphics and decomposition"
+title: "Forecasting: Principles and practice the Pythonic way"
 format: 
     pdf:
         number-sections: true 
@@ -37,6 +36,11 @@ import urllib
 import pandas as pd
 import numpy as np
 from plotnine import * 
+from utilsforecast.plotting import plot_series_utils
+from fpppy.utils import plot_series
+
+from scipy.stats import *
+import statsmodels.api as sm
 
 os.chdir('/Users/seb/Desktop/Projects/gas_pump_prices/')
 ```
@@ -452,7 +456,7 @@ In the residual plot, the residuals are normally ditributed, but ther are period
 
 ### Portmanteau tests for autoccorelation
 
-Looking at ACF plots can be misleading because autocorrelatinos can appear to be outliers due to sampling error. To control against this, use Ljung-Box test 
+Looking at ACF plots can be misleading because autocorrelations can appear to be outliers due to sampling error. To control against this, use Ljung-Box test 
 
 $$
 Q^* = T(T+2) \sum^l_{k=1} (T- k)^{-1} r^2_k, 
@@ -572,5 +576,101 @@ plot_bootstrap = autoplot(fit_boot, df_toronto |>
 ```
 
 
-### Forecastingusign transformations 
+### Forecasting with decomposition
+
+A simple way to express a decomposition is 
+
+$$
+y_t = \hat{S}_t + \hat{A}_t, 
+$$
+
+where $\hat{A}_t = \hat{T}_t\hat{R}_t$. Generally speaking, the seasonal component is assumed to unchanging or changing very slowly. 
+
+### Evaluating point forecast accuracy 
+ 
+Although analyzing residuals provides insight into whether a model can be improved, it does not give a reliable estimate of a model's performance on new data. To estimate test error, data need to be divided into a training and test set. The test set should contain at least as many time points as the forecast window. 
+
+**Forecast errors** represent residuals obtained from the test data. That is, the residuals obtained on $h$ time periods after the $T$ time point where the difference is computed between te observed value at time $T + h$ and the predicted value at time $T + h$ using data up until time $T$. 
+
+$$
+\epsilon_{T + h} = y_{T + h} \hat{y}_{T+h|T}
+$$
+
+Note that forecast errors differ from residuals in two ways. First, residuals are computed on the training data. Second, residuals are based only on one-step forecasts, whereas forecast errors can involve multi-step forecasts. 
+
+Errors can be one of three types: 
+
+1. **Scale-dependent errors**. Errors are in units of variable. Some examples include 
+
+$$
+MAE = \text{mean}(|\epsilon_t|) \\
+RMSE = \sqrt{text{mean}(\epsilon_t^2)}.
+$$
+
+Note that minimizing the MAE leads to forecasts of the median and minimizing the RMSE leads to forecasts of the mean. In other words, the RMSE is more appropriate when you want outliers to have large effects. 
+
+2. **Percentage errors**. Error at each $t$ time point is conveyed as percentage of observation at $t$ time point. That is, 
+
+$$
+MAPE = \text{mean}(|100 (\frac{\epsilon_t}{y_t}))
+$$
+
+Three disadvantages: 
+1. MAPE will blowup when $y_t$ is very close to zero and be undefined when $y_t$ is zero.
+2. Assumes meaningful zero. For example, temperature measures fo F and C have arbitrary zero points. 
+3. Asymmetric: treats the same absolute deviation differently depending on the size of the current value For example, a 5-point deviatin from a value of 10 is 50%, where it is onl 10% if the current value is 50. One historical solution was sMAPE, but this should be used because it can still blow up and can still be negative.  
+
+3. **Scaled errors**. Proposed by Hyndman & Koehler (2006) as an improvement on percentage errors by scaling errors using the training data MAE from a simple forecast method. As an example, for non-seasonal time series, one simple model to use as a reference is a naïve model (where the prediction is simply the last value) 
+
+$$
+q_j = \frac{\epsilon_j}{\frac{1}{T-1} \sum^T_{t=2} |y_t - y_{t-1}|}
+$$
+
+For a seasonal naïve model, we'd simply take the value from last year at the same time (i.e., $m$ time periods ago).
+$$
+q_j = \frac{\epsilon_j}{\frac{1}{T-1} \sum^T_{t=2} |y_t - y_{t-m}|}
+$$
+
+The MASE or RMSSE can then be calcuated by, respectively, taking the average or square root of the sum of squared errors.  
+
+### Examples
+
+```{r model-selection}
+recent_production <- aus_production |>
+  filter(year(Quarter) >= 1992)
+
+beer_train <- recent_production |>
+  filter(year(Quarter) <= 2007)
+
+beer_fit <- beer_train |>
+  model(
+    Mean = MEAN(Beer),
+    `Naive` = NAIVE(Beer),
+    `Seasonal naive` = SNAIVE(Beer),
+    Drift = RW(Beer ~ drift())
+  )
+
+beer_fc <- beer_fit |>
+  forecast(h = 10)
+
+beer_plot = beer_fc |>
+  autoplot(
+    aus_production |> filter(year(Quarter) >= 1992),
+    level = NULL
+  ) +
+  labs(
+    y = "Megalitres",
+    title = "Forecasts for quarterly beer production"
+  ) +
+  guides(colour = guide_legend(title = "Forecast"))
+
+# NOTE: notice values of 1 for MASE and RMSSE on training data
+accuracy(beer_fit)
+
+accuracy(beer_fc, recent_production)
+```
+
+### Evaluating distributional forecast accuracy
+
+
 
