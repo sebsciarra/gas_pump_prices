@@ -38,6 +38,7 @@ import numpy as np
 from plotnine import * 
 from utilsforecast.plotting import plot_series_utils
 from fpppy.utils import plot_series
+import datetime 
 
 from scipy.stats import *
 import statsmodels.api as sm
@@ -50,6 +51,45 @@ df_gas = pd.read_csv('data/raw/fueltypesall.csv')
 
 # convert date to datetime object 
 df_gas['Date'] = pd.to_datetime(df_gas['Date'])
+df_gas.drop('Type de carburant', axis=1, inplace=True)
+
+# convert to long format 
+df_gas = pd.melt(frame=df_gas, id_vars=['Date', 'Fuel Type'], 
+        var_name='city',value_name='price')
+df_gas = df_gas.query(
+    "city == 'Toronto East/Est' & 'Products and product groups' == 'Gasoline'"
+)
+
+# read in inflation data
+df_inflation = pd.read_csv('data/raw/1810000401_databaseLoadingData.csv')
+df_gas_inf = df_inflation.query('`Products and product groups` == "Gasoline"').copy()
+
+
+# compute dollars in terms of 2025 dollars
+# 1) Compute CPIs centered on 2025 
+value_25 = df_gas_inf.query('REF_DATE == "2025-06"')['VALUE']
+df_gas_inf['cpi_2025'] = value_25.values/df_gas_inf['VALUE']
+
+# merge in CPI value based on year-month and compute 
+df_gas['year_month'] = df_gas["Date"].dt.strftime("%Y-%m")
+df_gas_inf["REF_DATE"] = pd.to_datetime(df_gas_inf["REF_DATE"])
+df_gas_inf['date_ymw'] = df_gas_inf["REF_DATE"].dt.strftime("%Y-%m")
+
+cols = ['date_ymw', 'VALUE', 'cpi_2025']
+df_gas = pd.merge(left=df_gas, right=df_gas_inf[cols],
+                  left_on='year_month', right_on='date_ymw', how='left')
+
+
+# NOTE: replace 1990-01 with 1990-02 and 2025-07 with 2025-06
+df_gas.query('year_month == "1990-01"')['cpi_2025'] = df_gas.query('year_month == "1990-02"')['cpi_2025']
+df_gas.query('year_month == "2025-07"')['cpi_2025'] = df_gas.query('year_month == "2025-06"')['cpi_2025']
+
+# compute price adjusted metrics 
+df_gas['price_2025'] = df_gas['price'] * df_gas['cpi_2025']
+
+# create toronto data
+df_toronto = df_gas.query("city == 'Toronto East/Est'" )
+df_toronto.to_csv('data/processed/data_toronto_proc.csv', index=False)
 ```
 
 
@@ -92,14 +132,25 @@ df_gasr[df_gasr$year_month == '2025-07', 'cpi_2025'] = unique(df_gasr[df_gasr$ye
 df_gasr$price_2025 = df_gasr$price * df_gasr$cpi_2025
 ```
 
-## Time plots
+# Chapter 2: Time series graphics 
+
+
+## 2.2. Time plots
+
+Plotting price over time. 
+
+
+```{python time-plots}
+df_toronto = pd.read_csv("data/processed/data_toronto_proc.csv")
+
+plot_series(df=df_toronto, 
+            id_col='Date', time_col='Date')
+```
+
 
 ```{r time-plots}
 # plot gas prices in toronto over time
-df_toronto = df_gasr |>
-  filter(city == 'Toronto East/Est')
-
-write_csv(x=df_toronto, file='data/processed/data_toronto_proc.csv')
+df_toronto 
 # write toronto data 
 plot_toronto = autoplot(object=df_toronto, price_2025) + 
   labs(y='Price (2025 dollars)') + 
