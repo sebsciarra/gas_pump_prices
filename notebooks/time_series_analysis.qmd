@@ -15,7 +15,7 @@ engine: knitr
 # eval: false 
 """
 CPI adjustment for inflation 
-# https://www150.statcan.gc.ca/t1/tbl1/en/tv.action?pid=1810000501&pickMembers%5B0%5D=1.2&cubeTimeFrame.startYear=1990&cubeTimeFrame.endYear=2024&referencePeriods=19900101%2C20240101
+# https://www150.statcan.gc.ca/t1/tbl1/en/tv.action?pid=1810000401
 """
 ```
 
@@ -26,7 +26,7 @@ libraries(packages)
 # install.packages('feasts')
 use_condaenv("base", required = TRUE)
 
-setwd('/Users/seb/Desktop/Projects/gas_pump_prices/')
+# setwd('/Users/seb/Desktop/Projects/gas_pump_prices/')
 ```
 
 ```{python loading-packages}
@@ -36,16 +36,12 @@ import urllib
 import pandas as pd
 import numpy as np
 from plotnine import * 
-from utilsforecast.plotting import plot_series_utils
-from fpppy.utils import plot_series
 import datetime 
-
 from scipy.stats import *
 import statsmodels.api as sm
-
-os.chdir('/Users/seb/Desktop/Projects/gas_pump_prices/')
 ```
 
+Code reads in gas price data and applies inflation correction. Then extracts and writes data for Toronto. 
 ```{python load-data-pyt}
 df_gas = pd.read_csv('data/raw/fueltypesall.csv')
 
@@ -57,35 +53,38 @@ df_gas.drop('Type de carburant', axis=1, inplace=True)
 df_gas = pd.melt(frame=df_gas, id_vars=['Date', 'Fuel Type'], 
         var_name='city',value_name='price')
 df_gas = df_gas.query(
-    "city == 'Toronto East/Est' & 'Products and product groups' == 'Gasoline'"
-)
+    "city == 'Toronto East/Est' &  `Fuel Type` == 'Regular Unleaded Gasoline'")
 
 # read in inflation data
 df_inflation = pd.read_csv('data/raw/1810000401_databaseLoadingData.csv')
-df_gas_inf = df_inflation.query('`Products and product groups` == "Gasoline"').copy()
-
-
+df_inflation.columns = df_inflation.columns.str.lower()
+df_gas_inf = df_inflation.query("`products and product groups` == 'Gasoline'").copy()
+                                   
 # compute dollars in terms of 2025 dollars
-# 1) Compute CPIs centered on 2025 
-value_25 = df_gas_inf.query('REF_DATE == "2025-06"')['VALUE']
-df_gas_inf['cpi_2025'] = value_25.values/df_gas_inf['VALUE']
+# 1) Compute CPIs centered on 2025
+value_25 = df_gas_inf.query('ref_date == "2025-06"')['value']
+df_gas_inf['cpi_2025'] = df_gas_inf['value']/value_25.values
 
 # merge in CPI value based on year-month and compute 
 df_gas['year_month'] = df_gas["Date"].dt.strftime("%Y-%m")
-df_gas_inf["REF_DATE"] = pd.to_datetime(df_gas_inf["REF_DATE"])
-df_gas_inf['date_ymw'] = df_gas_inf["REF_DATE"].dt.strftime("%Y-%m")
+df_gas_inf["ref_date"] = pd.to_datetime(df_gas_inf["ref_date"])
+df_gas_inf['date_ymw'] = df_gas_inf["ref_date"].dt.strftime("%Y-%m")
 
-cols = ['date_ymw', 'VALUE', 'cpi_2025']
+cols = ['date_ymw', 'value', 'cpi_2025']
 df_gas = pd.merge(left=df_gas, right=df_gas_inf[cols],
                   left_on='year_month', right_on='date_ymw', how='left')
 
 
 # NOTE: replace 1990-01 with 1990-02 and 2025-07 with 2025-06
-df_gas.query('year_month == "1990-01"')['cpi_2025'] = df_gas.query('year_month == "1990-02"')['cpi_2025']
-df_gas.query('year_month == "2025-07"')['cpi_2025'] = df_gas.query('year_month == "2025-06"')['cpi_2025']
+df_gas.loc[df_gas['year_month'].eq("1990-01"), 'cpi_2025'] = df_gas.loc[df_gas['year_month'].eq("1990-02"), 'cpi_2025'].iloc[0]
+df_gas.loc[df_gas['year_month'].eq("2025-07"), 'cpi_2025'] = df_gas.loc[df_gas['year_month'].eq("2025-06"), 'cpi_2025'].iloc[0]
+
+assert (df_gas['cpi_2025'].isna().sum() == 0), '''Check missing cpi_2025 values'''
 
 # compute price adjusted metrics 
 df_gas['price_2025'] = df_gas['price'] * df_gas['cpi_2025']
+
+assert (df_gas['price_2025'].isna().sum() == 0), '''Check missing price_2025 values'''
 
 # create toronto data
 df_toronto = df_gas.query("city == 'Toronto East/Est'" )
@@ -104,7 +103,6 @@ df_gasr <- df_gasr |>
   as_tsibble(index = week, key = c('city', `Fuel Type`))
 ```
 
-Apply inflation correction to gas prices. 
 
 ```{r inflation-corr}
 # read in inflation data
@@ -142,10 +140,16 @@ Plotting price over time.
 
 ```{python time-plots}
 df_toronto = pd.read_csv("data/processed/data_toronto_proc.csv")
+df_toronto["year_month"] = pd.to_datetime(df_toronto["year_month"])
 
-plot_series(df=df_toronto, 
-            id_col='Date', time_col='Date')
+plot_tor_gas = (ggplot(data=df_toronto, mapping=aes(x='year_month', y='cpi_2025')) + 
+  geom_line(size=1) + 
+  theme_classic())
+
+plot_tor_gas.save("toronto_gas.png")
 ```
+
+
 
 
 ```{r time-plots}
