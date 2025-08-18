@@ -4,6 +4,7 @@ def preprocess(path, var_date):
 
     df_time = pd.read_csv(path)
 
+    df_time[var_date] = pd.to_datetime(df_time[var_date], format="%Y-%m-%d")
     # create month and year columns 
     df_time['month_txt'] = pd.to_datetime(df_time[var_date]).dt.strftime('%b')
 
