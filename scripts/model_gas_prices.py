@@ -5,7 +5,7 @@
 Goal
 1. Fit Toronto gas prices using 
 
-1) basic ETS/STL (base model for reference)
+1) Basic ETSL (base model for reference)
 2) Innovates state space models (slightly more advanced reference)
 3) 
 
@@ -17,16 +17,26 @@ the rate of production slows down.
 4. 
 """
 
+# region 0) Packages 
 import numpy as np 
 import pandas as pd
+import os
 import warnings
 warnings.filterwarnings('ignore')
+from statsforecast import StatsForecast
+from statsforecast.models import AutoETS
+from statsmodels.tsa.seasonal import seasonal_decompose
+from utilsforecast.evaluation import evaluate
+from utilsforecast.losses import rmse, mae, mape, mase
 
 from plotnine import *
+
+import calendar
 
 if any(fname.startswith("model_gas_prices.py") for fname in os.listdir()):
     os.chdir("..")
 
+# endregion 
 
 # region 1) Load gas price data and apply pre-processing 
 
@@ -88,3 +98,76 @@ df_toronto.to_csv('data/processed/data_toronto_proc.csv', index=False)
     theme_classic())
 
 # endregion 
+
+# region 3) Modelling 
+
+# create training and test sets
+df_train = df_toronto.loc[df_toronto['Date'].lt('2021')]
+df_test = df_toronto.loc[df_toronto['Date'].ge('2021')]
+
+# region 3a) ETS modeling
+
+"""
+Advantages over classical decomposition, SEATS, and X-11 methods
+1. Handle any type of seasonality (not just monthly and quarterly data)
+2. Seasonal component can change over time 
+3. Smoothness of trend cycle can be controlled by the user. 
+4. Trend cycle can be made robust to outliers.
+"""
+
+# initial examination of seasonal components (group by year and examine monthly average )
+df_toronto['year'] = df_toronto['Date'].dt.year
+df_toronto['month'] = df_toronto['Date'].dt.month
+df_toronto['month_name'] = df_toronto['Date'].dt.strftime('%b')
+
+df_month_avg =  (df_toronto.groupby(['year', 'month_name', 'month'])['price_2025'].mean().reset_index())
+
+month_labels = {i: calendar.month_abbr[i] for i in range(1, 13)}
+
+# NOTE: toronto gas price data doesn't have strong seasonality. 
+(ggplot(data=df_month_avg.loc[df_month_avg['year'].ge(2005)], 
+        mapping=aes(x='month', y='price_2025', group='factor(year)', color='factor(year)')) +
+    geom_line() +
+    scale_x_continuous(breaks=list(month_labels.keys()),
+                       labels=list(month_labels.values())) +
+    theme_classic())
+
+(df_toronto.groupby('month_name')['price_2025'].mean().reset_index())
+
+"""
+Compare following models using 10-fold cross-validation:
+
+1) ETS(A,N,N); simple exponential smoothing model w/ additive error
+2) ETS (A,A_d,N): Holt's linear method with damped trend (because gas prices 
+actually remain constant when accounting for inflation)
+3) ETS (A,A,A): Holt-Winters' additive method with seasonal component. The 
+data don't appear to have strong seasonality 
+
+Holt-Winters' model is the best reference model. 
+"""
+
+# ETS model (compare simple ETS(A,A,A) vs )
+autoets = AutoETS(season_length=52)
+autoets = autoets.fit(y=df_train["price_2025"].values)
+autoets.model_["method"]
+
+autoets.model_["fit"]
+
+sf = StatsForecast(
+    models=[AutoETS(season_length=52, model="ANN", alias="SES"), 
+            AutoETS(season_length=52, model="AAN", alias="Holt"), 
+            AutoETS(season_length=52, model="ANA", alias="error_season"), 
+            AutoETS(season_length=52, model="ANA", alias="Holt_Winter")], freq="WE")
+
+# 1. Use cross-validation  (10 sets with roling window size of 1 time period) 
+cols = ['Fuel Type', 'Date', 'price_2025']
+forecast_int = 1
+df_cv = sf.cross_validation(h=forecast_int, step_size=12, n_windows=10, 
+                            df=df_train[cols], target_col='price_2025', 
+                            time_col='Date', id_col='Fuel Type')
+
+print("CV performance: \n", 
+      evaluate(df=df_cv, metrics=[rmse, mae, mape], 
+               models=['SES', 'Holt', 'error_season', 'Holt_Winter'], 
+               target_col='price_2025', time_col='Date', id_col='Fuel Type'))
+
