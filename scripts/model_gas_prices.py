@@ -142,8 +142,6 @@ Compare following models using 10-fold cross-validation:
 actually remain constant when accounting for inflation)
 3) ETS (A,A,A): Holt-Winters' additive method with seasonal component. The 
 data don't appear to have strong seasonality 
-
-Holt-Winters' model is the best reference model. 
 """
 
 # ETS model (compare simple ETS(A,A,A) vs )
